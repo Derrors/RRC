@@ -5,7 +5,6 @@ Last update: Qinghe Li, 2020.01.30
 
 import os
 import torch
-import random
 import argparse
 import numpy as np
 
@@ -13,6 +12,9 @@ from apex.optimizers import FP16_Optimizer, FusedAdam
 from transformers import BertTokenizer, BertForQuestionAnswering, AdamW
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from data_preprocessing import extract_example
+
+BERT_PATH = './bert-pretrained-model'
+DATA_PATH = './data/rrc'
 
 
 def to_list(tensor):
@@ -145,14 +147,14 @@ def train_and_test(args, tokenizer, model, optimizer):
     Model training and testing on RRC dataset.
     '''
     # load the preprocessed data
-    train_input_ids, train_masks, train_segment_ids, train_answer_starts, train_answer_ends = extract_example(os.path.join(args.data_dir, 'train.json'), tokenizer, args.max_seq_length)
+    train_input_ids, train_masks, train_segment_ids, train_answer_starts, train_answer_ends = extract_example(os.path.join(args.data_file, 'train.json'), tokenizer, args.max_seq_length)
 
     # build the data loader of training and testing datasets
     train_data = TensorDataset(train_input_ids, train_masks, train_segment_ids, train_answer_starts, train_answer_ends)
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.batch_size)
 
-    test_input_ids, test_masks, test_segment_ids, test_answer_starts, test_answer_ends = extract_example(os.path.join(args.data_dir, 'test.json'), tokenizer, args.max_seq_length)
+    test_input_ids, test_masks, test_segment_ids, test_answer_starts, test_answer_ends = extract_example(os.path.join(args.data_file, 'test.json'), tokenizer, args.max_seq_length)
     test_data = TensorDataset(test_input_ids, test_masks, test_segment_ids, test_answer_starts, test_answer_ends)
     test_sampler = SequentialSampler(test_data)
     test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.batch_size)
@@ -173,19 +175,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--bert_model',
-                        default='./bert-pretrained-model/bert-base-uncased',
+                        default='bert-base-uncased',
                         type=str)
 
-    parser.add_argument('--data_dir',
-                        default='./data/original data/rrc/laptop',
+    parser.add_argument('--data_file',
+                        default='laptop',
                         type=str,
-                        help='The input data dir containing json files.')
-
-    parser.add_argument('--output_dir',
-                        default='./saved model checkpoints',
-                        type=str,
-                        help='The output directory where the model checkpoints will be written.',
-                        )
+                        help='The input data json files.')
 
     parser.add_argument('--batch_size',
                         default=32,
@@ -193,7 +189,7 @@ if __name__ == '__main__':
                         help='Total batch size for training.')
 
     parser.add_argument('--epochs',
-                        default=40,
+                        default=20,
                         type=int,
                         help='Total number of training epochs to perform.')
 
@@ -215,6 +211,8 @@ if __name__ == '__main__':
                         help='Whether to use 16-bit float precision instead of 32-bit')
 
     args = parser.parse_args()
+    args.bert_model = os.path.join(BERT_PATH, args.bert_model)
+    args.data_file = os.path.join(DATA_PATH, args.data_file)
 
     torch.manual_seed(2020)
 
