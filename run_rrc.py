@@ -8,6 +8,7 @@ import torch
 import argparse
 import numpy as np
 
+from torch.optim.lr_scheduler import LambdaLR
 from apex.optimizers import FP16_Optimizer, FusedAdam
 from transformers import BertTokenizer, BertForQuestionAnswering, AdamW
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
@@ -166,7 +167,7 @@ def train_and_test(args, tokenizer, model, optimizer):
         test_pred, test_ground = test(args, test_dataloader, model)
         test_metrics = evaluate(test_pred, test_ground)
 
-        print('Epoch[{:<2d}/{:<2d}]: loss: {:.4f}  EM: {:.4f}  F1:{:.4f}'.format(
+        print('Epoch[{:>2d}/{:<2d}]: loss: {:.4f}  EM: {:.4f}  F1:{:.4f}'.format(
             i + 1, args.epochs, loss, test_metrics['EM'] * 100, test_metrics['F1'] * 100))
 
 

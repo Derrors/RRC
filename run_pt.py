@@ -9,29 +9,31 @@ import argparse
 import numpy as np
 
 from apex.optimizers import FP16_Optimizer, FusedAdam
-from transformers import BertModel, BertForPreTraining, BertPreTrainedModel, AdamW
+from transformers.modeling_bert import BertModel, BertPreTrainingHeads, BertPreTrainedModel
+from transformers import AdamW
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 
 BERT_PATH = './bert-pretrained-model'
 OUTPUT_PATH = './bert-pretrained-model'
-DK_PATH = './data/domin_corpus'
+DK_PATH = './data/domain_corpus'
 MRC_PATH = './data/squad'
 
 
 class BertForPostTraining(BertPreTrainedModel):
     def __init__(self, config):
-        super(BertForPostTraining, self).__init__(config)
+        super().__init__(config)
         self.bert = BertModel(config)
-        self.cls = BertForPreTraining(config, self.bert.embeddings.word_embeddings.weight)
+        self.cls = BertPreTrainingHeads(config)
         self.qa_outputs = torch.nn.Linear(config.hidden_size, 2)
-        self.apply(self.init_bert_weights)
+
+        self.init_weights()
 
     def forward(self, mode, input_ids, attention_mask=None, token_type_ids=None, masked_lm_labels=None, next_sentence_label=None, start_positions=None, end_positions=None):
-        last_hidden_state, pooler_output = self.bert(input_ids=input_ids,
-                                                     attention_mask=attention_mask,
-                                                     token_type_ids=token_type_ids)
+        sequence_output, pooler_output = self.bert(input_ids=input_ids,
+                                                   attention_mask=attention_mask,
+                                                   token_type_ids=token_type_ids)
         if mode == 'review':
-            prediction_scores, seq_relationship_scores = self.cls(last_hidden_state, pooler_output)
+            prediction_scores, seq_relationship_scores = self.cls(sequence_output, pooler_output)
             if masked_lm_labels is not None and next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
 
@@ -43,7 +45,7 @@ class BertForPostTraining(BertPreTrainedModel):
             else:
                 return prediction_scores, seq_relationship_scores
         elif mode == 'squad':
-            logits = self.qa_outputs(last_hidden_state)
+            logits = self.qa_outputs(sequence_output)
             start_logits, end_logits = logits.split(1, dim=-1)
             start_logits = start_logits.squeeze(-1)
             end_logits = end_logits.squeeze(-1)
@@ -90,88 +92,126 @@ def train(args, model, optimizer):
     model.train()
     model.zero_grad()
 
+    review_iter = iter(review_dataloader)
+    squad_iter = iter(squad_dataloader)
+
+    tag = True
+    global_steps = 0
+
     if args.mode == 'DK':
-        for i in args.epochs:
-            for batch_data in review_dataloader:
-                batch_data = tuple(d.cuda() for d in batch_data)
-                input_ids, segment_ids, input_mask, masked_lm_ids, next_sentence_labels = batch_data
+        while tag:
+            try:
+                batch_review = next(review_iter)
+            except BaseException:
+                review_iter = iter(review_dataloader)
+                batch_review = next(review_iter)
+            batch_review = tuple(d.cuda() for d in batch_review)
+            input_ids, segment_ids, input_mask, masked_lm_ids, next_sentence_labels = batch_review
 
-                loss = model(input_ids=input_ids.long(),
-                             attention_mask=input_mask.long(),
-                             token_type_ids=segment_ids.long(),
-                             masked_lm_labels=masked_lm_ids.long(),
-                             next_sentence_label=next_sentence_labels.long())
+            loss = model(mode='review',
+                         input_ids=input_ids.long(),
+                         attention_mask=input_mask.long(),
+                         token_type_ids=segment_ids.long(),
+                         masked_lm_labels=masked_lm_ids.long(),
+                         next_sentence_label=next_sentence_labels.long())
 
-                if args.fp16:
-                    optimizer.backward(loss)
-                else:
-                    loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
+            if args.fp16:
+                optimizer.backward(loss)
+            else:
+                loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            global_steps += 1
 
-            print('Epoch[{:<2d}/{:<2d}]: loss: {:.4f}'.format(i + 1, args.epochs, loss.item()))
-
-        model.float()
-        torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
+            if global_steps % 1000 == 0:
+                print('Step[{:>5d}/{:<5d}]: loss: {:.4f}'.format(global_steps, args.steps, loss.item()))
+                model.float()
+                torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
+            if global_steps > 50000:
+                tag = False
+                break
 
     elif args.mode == 'MRC':
-        for i in args.epochs:
-            for batch_data in squad_dataloader:
-                batch_data = tuple(d.cuda() for d in batch_data)
-                input_ids, segment_ids, input_mask, start_positions, end_positions = batch_data
+        while tag:
+            try:
+                batch_squad = next(squad_iter)
+            except BaseException:
+                squad_iter = iter(squad_dataloader)
+                batch_squad = next(squad_iter)
+            batch_squad = tuple(d.cuda() for d in batch_squad)
+            input_ids, segment_ids, input_mask, start_positions, end_positions = batch_squad
 
-                loss = model(input_ids=input_ids.long(),
+            loss = model(mode='squad',
+                         input_ids=input_ids.long(),
+                         attention_mask=input_mask.long(),
+                         token_type_ids=segment_ids.long(),
+                         start_positions=start_positions.long(),
+                         end_positions=end_positions.long())
+
+            if args.fp16:
+                optimizer.backward(loss)
+            else:
+                loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            global_steps += 1
+
+            if global_steps % 1000 == 0:
+                print('Step[{:>5d}/{:<5d}]: loss: {:.4f}'.format(global_steps, args.steps, loss.item()))
+                model.float()
+                torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
+            if global_steps > 50000:
+                tag = False
+                break
+
+    elif args.mode == 'PT':
+        while tag:
+            try:
+                batch_review = next(review_iter)
+            except BaseException:
+                review_iter = iter(review_dataloader)
+                batch_review = next(review_iter)
+            batch_review = tuple(d.cuda() for d in batch_review)
+            input_ids, segment_ids, input_mask, masked_lm_ids, next_sentence_labels = batch_review
+
+            loss_dk = model(mode='review',
+                            input_ids=input_ids.long(),
+                            attention_mask=input_mask.long(),
+                            token_type_ids=segment_ids.long(),
+                            masked_lm_labels=masked_lm_ids.long(),
+                            next_sentence_label=next_sentence_labels.long())
+            try:
+                batch_squad = next(squad_iter)
+            except BaseException:
+                squad_iter = iter(squad_dataloader)
+                batch_squad = next(squad_iter)
+            batch_squad = tuple(d.cuda() for d in batch_squad)
+            input_ids, segment_ids, input_mask, start_positions, end_positions = batch_squad
+
+            loss_mrc = model(mode='squad',
+                             input_ids=input_ids.long(),
                              attention_mask=input_mask.long(),
                              token_type_ids=segment_ids.long(),
                              start_positions=start_positions.long(),
                              end_positions=end_positions.long())
 
-                if args.fp16:
-                    optimizer.backward(loss)
-                else:
-                    loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
+            loss = loss_dk + loss_mrc
 
-            print('Epoch[{:<2d}/{:<2d}]: loss: {:.4f}'.format(i + 1, args.epochs, loss.item()))
+            if args.fp16:
+                optimizer.backward(loss)
+            else:
+                loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            global_steps += 1
 
-        model.float()
-        torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
-
-    elif args.mode == 'PT':
-        for i in args.epochs:
-            for batch_review, batch_squad in zip(review_dataloader, squad_dataloader):
-                batch_review = tuple(d.cuda() for d in batch_review)
-                input_ids, segment_ids, input_mask, masked_lm_ids, next_sentence_labels = batch_review
-
-                loss_dk = model(input_ids=input_ids.long(),
-                                attention_mask=input_mask.long(),
-                                token_type_ids=segment_ids.long(),
-                                masked_lm_labels=masked_lm_ids.long(),
-                                next_sentence_label=next_sentence_labels.long())
-
-                batch_squad = tuple(d.cuda() for d in batch_squad)
-                input_ids, segment_ids, input_mask, start_positions, end_positions = batch_squad
-
-                loss_mrc = model(input_ids=input_ids.long(),
-                                 attention_mask=input_mask.long(),
-                                 token_type_ids=segment_ids.long(),
-                                 start_positions=start_positions.long(),
-                                 end_positions=end_positions.long())
-
-                loss = loss_dk + loss_mrc
-
-                if args.fp16:
-                    optimizer.backward(loss)
-                else:
-                    loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-
-                print('Epoch[{:<2d}/{:<2d}]: loss: {:.4f}'.format(i + 1, args.epochs, loss.item()))
-
-        model.float()
-        torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
+            if global_steps % 1000 == 0:
+                print('Step[{:>5d}/{:<5d}]: loss: {:.4f}'.format(global_steps, args.steps, loss.item()))
+                model.float()
+                torch.save(model.state_dict(), os.path.join(args.output_path, 'pytorch_model.bin'))
+            if global_steps > 50000:
+                tag = False
+                break
 
 
 if __name__ == '__main__':
@@ -197,14 +237,14 @@ if __name__ == '__main__':
                         help='The training mode for Posting-Training.')
 
     parser.add_argument('--batch_size',
-                        default=32,
+                        default=16,
                         type=int,
                         help='Total batch size for training.')
 
-    parser.add_argument('--epochs',
-                        default=20,
+    parser.add_argument('--steps',
+                        default=50000,
                         type=int,
-                        help='Total number of training epochs to perform.')
+                        help='Total number of training steps to perform.')
 
     parser.add_argument('--max_seq_length',
                         default=512,
@@ -219,15 +259,11 @@ if __name__ == '__main__':
                         help='The initial learning rate for Adam.')
 
     parser.add_argument('--fp16',
-                        default=True,
+                        default=False,
                         action='store_true',
                         help='Whether to use 16-bit float precision instead of 32-bit')
 
     args = parser.parse_args()
-
-    args.bert_model = os.path.join(BERT_PATH, args.bert_model)
-    args.review_data = os.path.join(DK_PATH, args.review_data)
-    args.squad_data = os.path.join(MRC_PATH, args.squad_data)
 
     if args.mode == 'DK':
         args.output_path = os.path.join(OUTPUT_PATH, 'DK', args.review_data)
@@ -237,9 +273,13 @@ if __name__ == '__main__':
         args.output_path = os.path.join(OUTPUT_PATH, 'PT', args.review_data)
 
     if not os.path.exists(args.output_path):
-        os.mkdir(args.output_path)
+        os.makedirs(args.output_path)
 
-    torch.manual_seed(args.seed)
+    args.bert_model = os.path.join(BERT_PATH, args.bert_model)
+    args.review_data = os.path.join(DK_PATH, args.review_data)
+    args.squad_data = os.path.join(MRC_PATH, args.squad_data)
+
+    torch.manual_seed(2020)
 
     model = BertForPostTraining.from_pretrained(args.bert_model)
 
