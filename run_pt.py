@@ -13,13 +13,18 @@ from transformers.modeling_bert import BertModel, BertPreTrainingHeads, BertPreT
 from transformers import AdamW
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 
-BERT_PATH = './bert-pretrained-model'
-OUTPUT_PATH = './bert-pretrained-model'
-DK_PATH = './data/domain_corpus'
-MRC_PATH = './data/squad'
+# set the paths
+BERT_PATH = './bert-pretrained-model'           # pretrained-model weights
+OUTPUT_PATH = './bert-pretrained-model'         # save path for post-training weights
+DK_PATH = './data/domain_corpus'                # dormain-knowledge training-data path
+MRC_PATH = './data/squad'                       # machine reading comprehension data path
 
 
 class BertForPostTraining(BertPreTrainedModel):
+    '''
+    Post-Training model.
+    '''
+
     def __init__(self, config):
         super().__init__(config)
         self.bert = BertModel(config)
@@ -32,6 +37,7 @@ class BertForPostTraining(BertPreTrainedModel):
         sequence_output, pooler_output = self.bert(input_ids=input_ids,
                                                    attention_mask=attention_mask,
                                                    token_type_ids=token_type_ids)
+        # use dk-data for pretrain model weights
         if mode == 'review':
             prediction_scores, seq_relationship_scores = self.cls(sequence_output, pooler_output)
             if masked_lm_labels is not None and next_sentence_label is not None:
@@ -44,6 +50,7 @@ class BertForPostTraining(BertPreTrainedModel):
                 return loss_dk
             else:
                 return prediction_scores, seq_relationship_scores
+        # use mrc-data for pretrain model weights
         elif mode == 'squad':
             logits = self.qa_outputs(sequence_output)
             start_logits, end_logits = logits.split(1, dim=-1)
@@ -67,6 +74,10 @@ class BertForPostTraining(BertPreTrainedModel):
 
 
 def train(args, model, optimizer):
+    '''
+    Start Post-Training.
+    '''
+    # load training-data and set up dataloader
     review_examples = np.load(os.path.join(args.review_data, 'data.npz'))
     squad_examples = np.load(args.squad_data)
 
@@ -95,9 +106,11 @@ def train(args, model, optimizer):
     review_iter = iter(review_dataloader)
     squad_iter = iter(squad_dataloader)
 
+    # set the end-tag for training
     tag = True
     global_steps = 0
 
+    # train the post-training model by the mode setting
     if args.mode == 'DK':
         while tag:
             try:
