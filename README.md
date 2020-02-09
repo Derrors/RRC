@@ -26,7 +26,7 @@ This is the reproduce for the papaer [BERT Post-Training for Review Reading Comp
 2.  下载实验数据：
     * [rrc dataset](https://drive.google.com/open?id=1NJv4NaPTgFNB5Q8fXPQkxLLXn5a0ASWe)
     * [dormain knowledge dataset](https://drive.google.com/open?id=1z4UhQRlh-IbKjQy7yTDnv9ZXt8tJD9N2)
-    * [machine reading comprehension dataset](https://drive.google.com/open?id=1HaB--VS8XiwU7MPYEDlOSw4SJByvxE2K)
+    * [machine reading comprehension dataset](https://drive.google.com/open?id=1HaB--VS8XiwU7MPYEDlOSw4SJByvxE2K)   
     其中 RRC 为原始数据， DK 和 MRC 为预处理后的数据.
 
 3.  RRC 项目目录结构如下：
