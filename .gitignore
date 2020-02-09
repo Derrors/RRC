@@ -1,1 +1,3 @@
 __pycache__/
+data/domain_corpus/rest/data.npz
+data/domain_corpus/laptop/data.npz
