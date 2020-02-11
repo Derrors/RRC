@@ -1,5 +1,5 @@
 '''
-Task: Review Reading Comprehension(RRC).
+Task: Review Reading Comprehension (RRC) .
 Last update: Qinghe Li, 2020.01.30
 '''
 
