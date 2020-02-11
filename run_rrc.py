@@ -1,5 +1,5 @@
 '''
-Experiments on the RRC dataset.
+Task: Review Reading Comprehension(RRC).
 Last update: Qinghe Li, 2020.01.30
 '''
 
@@ -8,7 +8,6 @@ import torch
 import argparse
 import numpy as np
 
-from torch.optim.lr_scheduler import LambdaLR
 from apex.optimizers import FP16_Optimizer, FusedAdam
 from transformers import BertTokenizer, BertForQuestionAnswering, AdamW
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
